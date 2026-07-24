@@ -2,6 +2,14 @@ name: BlazeMeter Test Upload
 
 on:
   workflow_dispatch:
+    inputs:
+      test_name:
+        description: BlazeMeter test name
+        required: true
+        default: K6 upload from GitHub Actions
+      project_id:
+        description: BlazeMeter project ID
+        required: true
 
 jobs:
   create-and-upload-test:
@@ -14,16 +22,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Get BlazeMeter token
+        id: token
+        shell: bash
+        run: |
+          response=$(curl -sS -X POST "$BLAZEMETER_BASE_URL/user/token" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "apiKey": "${{ secrets.BLAZEMETER_API_KEY }}",
+              "apiSecret": "${{ secrets.BLAZEMETER_API_SECRET }}"
+            }')
+
+          echo "$response" > token-response.json
+          TOKEN=$(python -c 'import json; print(json.load(open("token-response.json"))["token"])')
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
       - name: Create BlazeMeter test
         id: create_test
         shell: bash
+        env:
+          BLAZEMETER_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           response=$(curl -sS -X POST "$BLAZEMETER_BASE_URL/tests" \
-            -H "Authorization: Bearer ${{ secrets.BLAZEMETER_API_KEY }}" \
+            -H "Authorization: Bearer $BLAZEMETER_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
-              "name": "${{ github.repository }}-${{ github.run_number }}",
-              "projectId": "${{ secrets.BLAZEMETER_API_ID }}"
+              "name": "${{ inputs.test_name }}",
+              "projectId": "${{ inputs.project_id }}"
             }')
 
           echo "$response" > create-test-response.json
@@ -33,9 +58,10 @@ jobs:
       - name: Upload test2.js to BlazeMeter
         shell: bash
         env:
+          BLAZEMETER_TOKEN: ${{ steps.token.outputs.token }}
           TEST_ID: ${{ steps.create_test.outputs.test_id }}
         run: |
           curl -sS -X POST "$BLAZEMETER_BASE_URL/tests/$TEST_ID/files" \
-            -H "Authorization: Bearer ${{ secrets.BLAZEMETER_API_KEY }}" \
+            -H "Authorization: Bearer $BLAZEMETER_TOKEN" \
             -F "file=@test2.js;type=text/javascript" \
             -F "name=test2.js"
