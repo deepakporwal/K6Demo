@@ -14,7 +14,6 @@ on:
 jobs:
   create-and-upload-test:
     runs-on: ubuntu-latest
-
     env:
       BLAZEMETER_BASE_URL: https://a.blazemeter.com/api/v4
 
@@ -22,19 +21,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get BlazeMeter token
+      - name: Get BlazeMeter access token
         id: token
         shell: bash
         run: |
-          response=$(curl -sS -X POST "$BLAZEMETER_BASE_URL/user/token" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "apiKey": "${{ secrets.BLAZEMETER_API_KEY }}",
-              "apiSecret": "${{ secrets.BLAZEMETER_API_SECRET }}"
-            }')
+          set -euo pipefail
 
-          echo "$response" > token-response.json
-          TOKEN=$(python -c 'import json; print(json.load(open("token-response.json"))["token"])')
+          curl --fail-with-body -sS -X POST "$BLAZEMETER_BASE_URL/user/token" \
+            -H "Content-Type: application/json" \
+            -d @- <<EOF > token-response.json
+          {
+            "apiKey": "${{ secrets.BLAZEMETER_API_KEY }}",
+            "apiSecret": "${{ secrets.BLAZEMETER_API_SECRET }}"
+          }
+          EOF
+
+          TOKEN=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('token-response.json').read_text())
+          token = data.get('token') or data.get('accessToken') or data.get('data', {}).get('token')
+          if not token:
+              raise SystemExit('BlazeMeter token not found in token response')
+          print(token)
+          PY
+          )
+
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: Create BlazeMeter test
@@ -43,16 +55,29 @@ jobs:
         env:
           BLAZEMETER_TOKEN: ${{ steps.token.outputs.token }}
         run: |
-          response=$(curl -sS -X POST "$BLAZEMETER_BASE_URL/tests" \
+          set -euo pipefail
+
+          curl --fail-with-body -sS -X POST "$BLAZEMETER_BASE_URL/tests" \
             -H "Authorization: Bearer $BLAZEMETER_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{
-              "name": "${{ inputs.test_name }}",
-              "projectId": "${{ inputs.project_id }}"
-            }')
+            -d @- <<EOF > create-test-response.json
+          {
+            "name": "${{ inputs.test_name }}",
+            "projectId": "${{ inputs.project_id }}"
+          }
+          EOF
 
-          echo "$response" > create-test-response.json
-          TEST_ID=$(python -c 'import json; print(json.load(open("create-test-response.json"))["id"])')
+          TEST_ID=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('create-test-response.json').read_text())
+          test_id = data.get('id') or data.get('data', {}).get('id')
+          if not test_id:
+              raise SystemExit('BlazeMeter test id not found in create response')
+          print(test_id)
+          PY
+          )
+
           echo "test_id=$TEST_ID" >> "$GITHUB_OUTPUT"
 
       - name: Upload test2.js to BlazeMeter
@@ -61,7 +86,9 @@ jobs:
           BLAZEMETER_TOKEN: ${{ steps.token.outputs.token }}
           TEST_ID: ${{ steps.create_test.outputs.test_id }}
         run: |
-          curl -sS -X POST "$BLAZEMETER_BASE_URL/tests/$TEST_ID/files" \
+          set -euo pipefail
+
+          curl --fail-with-body -sS -X POST "$BLAZEMETER_BASE_URL/tests/$TEST_ID/files" \
             -H "Authorization: Bearer $BLAZEMETER_TOKEN" \
             -F "file=@test2.js;type=text/javascript" \
             -F "name=test2.js"
