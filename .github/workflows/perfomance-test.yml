@@ -1,0 +1,41 @@
+name: BlazeMeter Test Upload
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-and-upload-test:
+    runs-on: ubuntu-latest
+
+    env:
+      BLAZEMETER_BASE_URL: https://a.blazemeter.com/api/v4
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create BlazeMeter test
+        id: create_test
+        shell: bash
+        run: |
+          response=$(curl -sS -X POST "$BLAZEMETER_BASE_URL/tests" \
+            -H "Authorization: Bearer ${{ secrets.BLAZEMETER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "${{ github.repository }}-${{ github.run_number }}",
+              "projectId": "${{ secrets.BLAZEMETER_API_ID }}"
+            }')
+
+          echo "$response" > create-test-response.json
+          TEST_ID=$(python -c 'import json; print(json.load(open("create-test-response.json"))["id"])')
+          echo "test_id=$TEST_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Upload test2.js to BlazeMeter
+        shell: bash
+        env:
+          TEST_ID: ${{ steps.create_test.outputs.test_id }}
+        run: |
+          curl -sS -X POST "$BLAZEMETER_BASE_URL/tests/$TEST_ID/files" \
+            -H "Authorization: Bearer ${{ secrets.BLAZEMETER_API_KEY }}" \
+            -F "file=@test2.js;type=text/javascript" \
+            -F "name=test2.js"
